@@ -90,6 +90,10 @@ Stage 사이에 2x2 kernel을 갖고, stride가 2인 convolution을 이용하여
 |res5|depthwise conv 7x7, 768</br>1x1 conv, 3072</br>1x1 conv, 768|3|7x7|
 |FC|클래스 수로 줄이는 MLP|1|1000/21000
 
+
+# model pseudo code
+너무 간단하게 쓰면 안됨, 자세하게 썼다가 틀려도 안됨
+
 # Requirements 설명
 > 필요시 python library 및 version 설명해야함
 
@@ -148,7 +152,7 @@ IMAGENET 22k에서 학습된 모델과 IMAGENET 22k에서 학습되고 IMAGENET 
 image 폴더에 classification 수행할 모든 이미지 파일을 저장
 
 | model description | image size | model name | args |
-|:---:|:---:|:---:|:---:|:---:|
+|:---:|:---:|:---:|:---:|
 | trained on 22k fine tuned on 1k | 224x224 | ConvNeXt-T | convnext_tiny_in22ft1k |
 | trained on 22k fine tuned on 1k | 224x224 | ConvNeXt-S | convnext_small_in22ft1k |
 | trained on 22k fine tuned on 1k | 224x224 | ConvNeXt-B | convnext_base_in22ft1k |
@@ -175,9 +179,7 @@ matplotlib을 통하여 각 이미지에 대한 출력을 얻을 수 있다.
 
 
 ## detection 수행방법
+일단 패스
 
-
-# model pseudo code
-너무 간단하게 쓰면 안됨, 자세하게 썼다가 틀려도 안됨
 
 # ㅁㄴㅇㄹasdfㅁㄴㅇㄹㅁㄴㅇㄹasdf
