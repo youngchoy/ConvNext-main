@@ -95,29 +95,6 @@ ConvNeXt-T의 pseudo code는 아래와 같다.
 <img src="https://github.com/youngchoy/ConvNext-main/assets/77494237/7424d51e-f11f-4696-9ed0-f3f0dae344f6">
 
 
-# Algorithm 1
-Just a sample algorithmn
-\begin{algorithm}[H]
-\DontPrintSemicolon
-\SetAlgoLined
-\KwResult{Write here the result}
-\SetKwInOut{Input}{Input}\SetKwInOut{Output}{Output}
-\Input{Write here the input}
-\Output{Write here the output}
-\BlankLine
-\While{While condition}{
-    instructions\;
-    \eIf{condition}{
-        instructions1\;
-        instructions2\;
-    }{
-        instructions3\;
-    }
-}
-\caption{While loop with If/Else condition}
-\end{algorithm}
-
-
 # Requirements 설명
 
 파이썬 3.9.0 사용
@@ -139,7 +116,7 @@ pip install torch==1.8.0+cu111 torchvision==0.9.0+cu111 -f https://download.pyto
 convnext_isotropic.py와 convnext.py를 통해서 확인할 수 있다.
 convnext.py는 일반적인 ConvNeXt 모델을 뜻하고,  
 convnext_isotropic.py는 ViT스타일로 일반화시킨 모델로, downsampling을 없애고 feature resolution을 고정한 모델을 뜻한다.  
-다만 해당 repo에서는 convnext_isotropic의 코드만 있을 뿐 학습이나 
+다만 해당 repo에서는 convnext_isotropic의 코드만 있을 뿐 학습이나 추론에는 사용하지 않는다.
 
 ## training 수행방법
 
@@ -168,7 +145,15 @@ ImageNet데이터셋을 다운로드 받고 아래와 같은 계층으로 데이
 혹은
 val 데이터의 경우 val 폴더 내에 이미지들을 모아두고 imagenet_move_to_folder.py 파일을 실행한다.
 
-training을 수행하기 위해서 main2.py 파일을 실행한다.
+training을 수행하기 위해서 main2.py 파일을 실행한다.  
+해당 코드를 수행하게되면 224x224사이즈의 ConvNeXt-T로 IMAGENET 1k에 대해 학습한다.  
+만일 다른 모델을 실행하고자 한다면 main2.py의 499번째 줄의 convnext_tiny를  
+|모델 이름|parameter|
+|---|---|
+|ConvNeXt-T|convnext_tiny|
+|ConvNeXt-S|convnext_small|
+|ConvNeXt-B|convnext_base|
+|ConvNeXt-L|convnext_large|
 
 ## pretrained model 다운로드
 ### 1. pretrained on IMAGENET 1k
@@ -197,14 +182,6 @@ IMAGENET 22k에서 학습된 모델과 IMAGENET 22k에서 학습되고 IMAGENET 
 | ConvNeXt-L | 384x384 | 87.5 | 198M | 101.0G |    -         | [model](https://dl.fbaipublicfiles.com/convnext/convnext_large_22k_1k_384.pth)
 | ConvNeXt-XL | 224x224 | 87.0 | 350M | 60.9G | [model](https://dl.fbaipublicfiles.com/convnext/convnext_xlarge_22k_224.pth) | [model](https://dl.fbaipublicfiles.com/convnext/convnext_xlarge_22k_1k_224_ema.pth)
 | ConvNeXt-XL | 384x384 | 87.8 | 350M | 179.0G |  -          | [model](https://dl.fbaipublicfiles.com/convnext/convnext_xlarge_22k_1k_384_ema.pth)
-
-### 3. pretrained on IMAGENET 1k (isotropic model)
-
-| name | resolution |acc@1 | #params | FLOPs | model |
-|:---:|:---:|:---:|:---:| :---:|:---:|
-| ConvNeXt-S | 224x224 | 78.7 | 22M | 4.3G | [model](https://dl.fbaipublicfiles.com/convnext/convnext_iso_small_1k_224_ema.pth) |
-| ConvNeXt-B | 224x224 | 82.0 | 87M | 16.9G | [model](https://dl.fbaipublicfiles.com/convnext/convnext_iso_base_1k_224_ema.pth) |
-| ConvNeXt-L | 224x224 | 82.6 | 306M | 59.7G | [model](https://dl.fbaipublicfiles.com/convnext/convnext_iso_large_1k_224_ema.pth) |
 
 ## 이미지에 대한 classification 수행방법
 
