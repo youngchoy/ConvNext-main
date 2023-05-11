@@ -92,7 +92,7 @@ Stage 사이에 2x2 kernel을 갖고, stride가 2인 convolution을 이용하여
 # model pseudo code
 
 ConvNeXt-T의 pseudo code는 아래와 같다.
-<img scr="pseudo_code.png">
+<img scr="https://github.com/youngchoy/ConvNext-main/assets/77494237/7424d51e-f11f-4696-9ed0-f3f0dae344f6">
 
 
 # Algorithm 1
