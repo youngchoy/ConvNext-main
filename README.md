@@ -1,6 +1,4 @@
-# CONVNEXT
-
-Github에 repo 만들어야함
+# CONVNEXT v1
 
 # 모델설명
 
@@ -35,30 +33,30 @@ ConvNext에서 적용한 것들은 다음과 같다.
 |BN을 LN으로 변경|81.4%|▶|81.5%|+0.1%|
 |downsampling layer 분리|81.5%|▶|82.0%|+0.5%|
 
-### 1. Transformer의 training techniques 적용
+#### 1. Transformer의 training techniques 적용
 - 훈련 epochs를 300으로 증가
 - AdamW optimizer 적용
 - Mixup, Cutmix, RandArgument, RandomErasing등 Data augmentation 적용
 - Stochastic Depth, Label Smoothing등의 정규화 schemes 적용
 
-### 2. Convolution network의 stage compute ratio를 변경
+#### 2. Convolution network의 stage compute ratio를 변경
 
 Swin-T에서 stage ratio는 1:1:3:1이다. (Large Swin Transformer의 경우 1:1:9:1)
 따라서 이를 모방해 ResNet의 stage ratio를 (3,3,9,3)으로 변경하였다.
 
-### 3. Convolution network의 stem부분을 patchify로 변경
+#### 3. Convolution network의 stem부분을 patchify로 변경
 
 ResNet에서는 7x7 커널을 가진 stride2인 convolution을 사용하고 maxpool을 사용하지만, ConvNeXt에서는 stem cell을 4x4 kernel을 갖는 stride 4 convolution으로 변경하였다.
 
-### 4. ResNeXt의 depthwise convolution을 적용
+#### 4. ResNeXt의 depthwise convolution을 적용
 
 depthwise convolution을 사용하였다. Network의 width는 Swin-T의 채널수와 동일한 96으로 증가시켰다.
 
-### 5. Inverted bottleneck 구조 적용
+#### 5. Inverted bottleneck 구조 적용
 
 Transformer에서 중요한 디자인 요소 중 하나인 inverted bottleneck을 적용하였다.
 
-### 6. 커널 사이즈 변경
+#### 6. 커널 사이즈 변경
 
 Depthwise convolution layer를 먼저 수행하고, 효율적이고 dense한 1x1 convolution은 그 이후에 수행하도록 하였다.
 convolution block
@@ -66,16 +64,16 @@ convolution block
 2. 1x1 convolution 96 -> 384
 3. 1x1 convolution 384 -> 96
 
-### 7. Activation Function을 ReLU대신 GELU로 변경
+#### 7. Activation Function을 ReLU대신 GELU로 변경
 
 Activation function을 transformer에서 사용하는 GELU를 사용하였다.
 그리고 transformer에서는 convolution에서보다 더 적은 activation function을 사용하므로 이를 차용하여 convolution block에서 두 1x1 convolution 사이에만 activation function을 적용하였다.
 
-### 8. Batch Normalization을 Layer Normalization으로 변경
+#### 8. Batch Normalization을 Layer Normalization으로 변경
 
 Batch Normalization 대신에 Layer Normalization을 사용하였다.
 
-### 9. Downsampling Layer 분리
+#### 9. Downsampling Layer 분리
 
 Stage 사이에 2x2 kernel을 갖고, stride가 2인 convolution을 이용하여 downsampling을 적용한다.
 
@@ -92,26 +90,87 @@ Stage 사이에 2x2 kernel을 갖고, stride가 2인 convolution을 이용하여
 
 
 # model pseudo code
-너무 간단하게 쓰면 안됨, 자세하게 썼다가 틀려도 안됨
+
+ConvNeXt-T의 pseudo code는 아래와 같다.
+<img scr="pseudo_code.png">
+
+
+# Algorithm 1
+Just a sample algorithmn
+\begin{algorithm}[H]
+\DontPrintSemicolon
+\SetAlgoLined
+\KwResult{Write here the result}
+\SetKwInOut{Input}{Input}\SetKwInOut{Output}{Output}
+\Input{Write here the input}
+\Output{Write here the output}
+\BlankLine
+\While{While condition}{
+    instructions\;
+    \eIf{condition}{
+        instructions1\;
+        instructions2\;
+    }{
+        instructions3\;
+    }
+}
+\caption{While loop with If/Else condition}
+\end{algorithm}
+
 
 # Requirements 설명
-> 필요시 python library 및 version 설명해야함
+
+파이썬 3.9.0 사용
 
 필요한 library
-- torch >= 1.8.0
-- torchvision >= 0.9.0
-- timm >= 0.3.2
 
+- torch == 1.8.1
+- torchvision == 0.9.0
+torch와 torchvision은 아래의 명령어를 이용하여 다운로드 받을 수 있다.
+```
+pip install torch==1.8.0+cu111 torchvision==0.9.0+cu111 -f https://download.pytorch.org/whl/torch_stable.html
+```
+- timm == 0.3.4
+- tensorboardX == 2.6
 
 # 실행방법
 
-모델에 대한 디테일은 models파일에  
+모델에 대한 디테일은 models파일의  
 convnext_isotropic.py와 convnext.py를 통해서 확인할 수 있다.
 convnext.py는 일반적인 ConvNeXt 모델을 뜻하고,  
-convnext_isotropic.py는 ViT스타일로 일반화시킨 모델로, downsampling을 없애고 feature resolution을 고정한 모델을 뜻한다.
+convnext_isotropic.py는 ViT스타일로 일반화시킨 모델로, downsampling을 없애고 feature resolution을 고정한 모델을 뜻한다.  
+다만 해당 repo에서는 convnext_isotropic의 코드만 있을 뿐 학습이나 
+
+## training 수행방법
+
+
+ImageNet데이터셋을 다운로드 받고 아래와 같은 계층으로 데이터를 정리한다.
+```
+-imagenet-1k
+--train
+---1
+----00000001.JPEG
+----00000002.JPEG
+---2
+----00000003.JPEG
+----00000004.JPEG
+---3
+----00000005.JPEG
+----00000006.JPEG
+--val
+---1
+----00000007.JPEG
+---2
+----00000008.JPEG
+---3
+----00000009.JPEG
+```
+혹은
+val 데이터의 경우 val 폴더 내에 이미지들을 모아두고 imagenet_move_to_folder.py 파일을 실행한다.
+
+training을 수행하기 위해서 main2.py 파일을 실행한다.
 
 ## pretrained model 다운로드
-pretrained model
 ### 1. pretrained on IMAGENET 1k
 
 | name | resolution |acc@1 | #params | FLOPs | model |
@@ -176,10 +235,3 @@ python classification.py --model convnext_tiny_in22
 ```
 
 matplotlib을 통하여 각 이미지에 대한 출력을 얻을 수 있다.
-
-
-## detection 수행방법
-일단 패스
-
-
-# ㅁㄴㅇㄹasdfㅁㄴㅇㄹㅁㄴㅇㄹasdf

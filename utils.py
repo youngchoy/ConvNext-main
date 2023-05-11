@@ -444,7 +444,7 @@ def cosine_scheduler(base_value, final_value, epochs, niter_per_ep, warmup_epoch
     assert len(schedule) == epochs * niter_per_ep
     return schedule
 
-def save_model(args, epoch, model, model_without_ddp, optimizer, loss_scaler, model_ema=None):
+def save_model(args, epoch, model, model_without_ddp, optimizer, loss_scaler=None, model_ema=None):
     output_dir = Path(args.output_dir)
     epoch_name = str(epoch)
     checkpoint_paths = [output_dir / ('checkpoint-%s.pth' % epoch_name)]
@@ -453,7 +453,8 @@ def save_model(args, epoch, model, model_without_ddp, optimizer, loss_scaler, mo
             'model': model_without_ddp.state_dict(),
             'optimizer': optimizer.state_dict(),
             'epoch': epoch,
-            'scaler': loss_scaler.state_dict(),
+            # 'scaler': loss_scaler.state_dict(),
+            'scalar': None,
             'args': args,
         }
 
@@ -471,10 +472,12 @@ def save_model(args, epoch, model, model_without_ddp, optimizer, loss_scaler, mo
 
 def auto_load_model(args, model, model_without_ddp, optimizer, loss_scaler, model_ema=None):
     output_dir = Path(args.output_dir)
+    # auto_resume이 True이고 args.resume이 0인 경우
     if args.auto_resume and len(args.resume) == 0:
         import glob
         all_checkpoints = glob.glob(os.path.join(output_dir, 'checkpoint-*.pth'))
         latest_ckpt = -1
+        # 체크포인트 초기화를 위한 코드
         for ckpt in all_checkpoints:
             t = ckpt.split('-')[-1].split('.')[0]
             if t.isdigit():
@@ -483,6 +486,7 @@ def auto_load_model(args, model, model_without_ddp, optimizer, loss_scaler, mode
             args.resume = os.path.join(output_dir, 'checkpoint-%d.pth' % latest_ckpt)
         print("Auto resume checkpoint: %s" % args.resume)
 
+    # resume 상태인 경우 설정
     if args.resume:
         if args.resume.startswith('https'):
             checkpoint = torch.hub.load_state_dict_from_url(

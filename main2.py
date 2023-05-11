@@ -1,11 +1,3 @@
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-
-# All rights reserved.
-
-# This source code is licensed under the license found in the
-# LICENSE file in the root directory of this source tree.
-
-
 import argparse
 import datetime
 import numpy as np
@@ -15,6 +7,7 @@ import torch.nn as nn
 import torch.backends.cudnn as cudnn
 import json
 import os
+import math
 
 from pathlib import Path
 
@@ -26,6 +19,7 @@ from optim_factory import create_optimizer, LayerDecayValueAssigner
 
 from datasets import build_dataset
 from engine import train_one_epoch, evaluate
+from typing import Iterable, Optional
 
 from utils import NativeScalerWithGradNormCount as NativeScaler
 import utils
@@ -201,17 +195,109 @@ def get_args_parser():
 
     return parser
 
-def main(args):
-    # distributed_mode 설정?
-    utils.init_distributed_mode(args)
-    device = torch.device(args.device)
+def one_epoch_train(model: torch.nn.Module, criterion: torch.nn.Module,
+                    data_loader: Iterable, optimizer: torch.optim.Optimizer,
+                    device: torch.device, epoch: int, loss_scaler=None, max_norm: float = 0,
+                    model_ema: Optional[ModelEma] = None, mixup_fn: Optional[Mixup] = None, log_writer=None,
+                    wandb_logger=None, start_steps=None, lr_schedule_values=None, wd_schedule_values=None,
+                    num_training_steps_per_epoch=None, update_freq=None, use_amp=False):
+    model.train()
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    metric_logger.add_meter('lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+    metric_logger.add_meter('min_lr', utils.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+    header = 'Epoch: [{}]'.format(epoch)
+    # frequency 몇마다 출력할건지
+    # batch를 작게 갈거기 때문에 작게 할 필요가 없어보임
+    print_freq = 500
+    
+    optimizer.zero_grad()
+    
+    for data_iter_step, (samples, targets) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
+        # batch만큼 불러오고 몇번째 step인지 step을 나타냄
+        step = data_iter_step // update_freq
+        
+        if step >= num_training_steps_per_epoch:
+            continue
+        it = start_steps + step  # global training iteration
+        # Update LR & WD for the first acc
+        if lr_schedule_values is not None or wd_schedule_values is not None and data_iter_step % update_freq == 0:
+            for i, param_group in enumerate(optimizer.param_groups):
+                if lr_schedule_values is not None:
+                    param_group["lr"] = lr_schedule_values[it] * param_group["lr_scale"]
+                if wd_schedule_values is not None and param_group["weight_decay"] > 0:
+                    param_group["weight_decay"] = wd_schedule_values[it]
 
+        samples = samples.to(device, non_blocking=True)
+        targets = targets.to(device, non_blocking=True)
+        
+        # mixup 세팅
+        if mixup_fn is not None:
+            samples, targets = mixup_fn(samples, targets)
+            
+        output = model(samples)
+        loss = criterion(output, targets)
+        
+        loss_value = loss.item()
+        
+        # 이 코드는 학습 도중 발생하는 비정상적인 손실값을 체크하고, 만약 손실값이 유한한 값(finite value)이 아니면, 학습을 중단하는 역할
+        if not math.isfinite(loss_value): # this could trigger if using AMP
+            print("Loss is {}, stopping training".format(loss_value))
+            assert math.isfinite(loss_value)
+    
+        loss /= update_freq
+        loss.backward()
+        if (data_iter_step + 1) % update_freq == 0:
+            optimizer.step()
+            optimizer.zero_grad()
+            if model_ema is not None:
+                model_ema.update(model)
+                
+        # CUDA 장치에서 실행되는 모든 CUDA 커널이 완료될 때까지 실행을 중단하고 대기하는 역할
+        torch.cuda.synchronize()
+        
+        if mixup_fn is None:
+            class_acc = (output.max(-1)[-1] == targets).float().mean()
+        else:
+            class_acc = None
+        metric_logger.update(loss=loss_value)
+        metric_logger.update(class_acc=class_acc)
+        min_lr = 10.
+        max_lr = 0.
+        for group in optimizer.param_groups:
+            min_lr = min(min_lr, group["lr"])
+            max_lr = max(max_lr, group["lr"])
+
+        metric_logger.update(lr=max_lr)
+        metric_logger.update(min_lr=min_lr)
+        weight_decay_value = None
+        for group in optimizer.param_groups:
+            if group["weight_decay"] > 0:
+                weight_decay_value = group["weight_decay"]
+        metric_logger.update(weight_decay=weight_decay_value)
+        
+        if log_writer is not None:
+            log_writer.update(loss=loss_value, head="loss")
+            log_writer.update(class_acc=class_acc, head="loss")
+            log_writer.update(lr=max_lr, head="opt")
+            log_writer.update(min_lr=min_lr, head="opt")
+            log_writer.update(weight_decay=weight_decay_value, head="opt")
+            log_writer.set_step()
+            
+    # gather the stats from all processes
+    metric_logger.synchronize_between_processes()
+    print("Averaged stats:", metric_logger)
+    return {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+        
+
+def main(args):
+    device = torch.device(args.device)
+    
     # reproducibility를 위해 시드 고정
     seed = args.seed + utils.get_rank()
     torch.manual_seed(seed)
     np.random.seed(seed)
     cudnn.benchmark = True
-
+    
     # 데이터셋 만들기
     dataset_train, args.nb_classes = build_dataset(is_train=True, args=args)
     if args.disable_eval:
@@ -219,38 +305,9 @@ def main(args):
         dataset_val = None
     else:
         dataset_val, _ = build_dataset(is_train=False, args=args)
-
-    # 분산학습을 위한 데이터 로더 생성코드
-    num_tasks = utils.get_world_size()
-    global_rank = utils.get_rank()
-
-    sampler_train = torch.utils.data.DistributedSampler(
-        dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True, seed=args.seed,
-    )
-    print("Sampler_train = %s" % str(sampler_train))
-    if args.dist_eval:
-        if len(dataset_val) % num_tasks != 0:
-            print('Warning: Enabling distributed evaluation with an eval dataset not divisible by process number. '
-                    'This will slightly alter validation results as extra duplicate entries are added to achieve '
-                    'equal num of samples per-process.')
-        sampler_val = torch.utils.data.DistributedSampler(
-            dataset_val, num_replicas=num_tasks, rank=global_rank, shuffle=False)
-    else:
-        sampler_val = torch.utils.data.SequentialSampler(dataset_val)
-
-    if global_rank == 0 and args.log_dir is not None:
-        os.makedirs(args.log_dir, exist_ok=True)
-        log_writer = utils.TensorboardLogger(log_dir=args.log_dir)
-    else:
-        log_writer = None
-
-    if global_rank == 0 and args.enable_wandb:
-        wandb_logger = utils.WandbLogger(args)
-    else:
-        wandb_logger = None
-
+        
     data_loader_train = torch.utils.data.DataLoader(
-        dataset_train, sampler=sampler_train,
+        dataset_train,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
@@ -259,7 +316,7 @@ def main(args):
 
     if dataset_val is not None:
         data_loader_val = torch.utils.data.DataLoader(
-            dataset_val, sampler=sampler_val,
+            dataset_val,
             batch_size=int(1.5 * args.batch_size),
             num_workers=args.num_workers,
             pin_memory=args.pin_mem,
@@ -268,6 +325,7 @@ def main(args):
     else:
         data_loader_val = None
 
+    # mix up function 설정
     mixup_fn = None
     mixup_active = args.mixup > 0 or args.cutmix > 0. or args.cutmix_minmax is not None
     if mixup_active:
@@ -276,8 +334,8 @@ def main(args):
             mixup_alpha=args.mixup, cutmix_alpha=args.cutmix, cutmix_minmax=args.cutmix_minmax,
             prob=args.mixup_prob, switch_prob=args.mixup_switch_prob, mode=args.mixup_mode,
             label_smoothing=args.smoothing, num_classes=args.nb_classes)
-
-    # 모델 만들기
+        
+    # model 설정
     model = create_model(
         args.model, 
         pretrained=False, 
@@ -286,33 +344,9 @@ def main(args):
         layer_scale_init_value=args.layer_scale_init_value,
         head_init_scale=args.head_init_scale,
         )
-
-    # fine-tuning을 위한 것?
-    if args.finetune:
-        if args.finetune.startswith('https'):
-            checkpoint = torch.hub.load_state_dict_from_url(
-                args.finetune, map_location='cpu', check_hash=True)
-        else:
-            checkpoint = torch.load(args.finetune, map_location='cpu')
-
-        print("Load ckpt from %s" % args.finetune)
-        checkpoint_model = None
-        for model_key in args.model_key.split('|'):
-            if model_key in checkpoint:
-                checkpoint_model = checkpoint[model_key]
-                print("Load state_dict by model_key = %s" % model_key)
-                break
-        if checkpoint_model is None:
-            checkpoint_model = checkpoint
-        state_dict = model.state_dict()
-        for k in ['head.weight', 'head.bias']:
-            if k in checkpoint_model and checkpoint_model[k].shape != state_dict[k].shape:
-                print(f"Removing key {k} from pretrained checkpoint")
-                del checkpoint_model[k]
-        utils.load_state_dict(model, checkpoint_model, prefix=args.model_prefix)
+    
     model.to(device)
 
-    # model ema
     model_ema = None
     if args.model_ema:
         # Important to create EMA model after cuda(), DP wrapper, and AMP but before SyncBN and DDP wrapper
@@ -322,7 +356,7 @@ def main(args):
             device='cpu' if args.model_ema_force_cpu else '',
             resume='')
         print("Using EMA with decay = %.8f" % args.model_ema_decay)
-
+        
     model_without_ddp = model
     n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
@@ -336,7 +370,7 @@ def main(args):
     print("Update frequent = %d" % args.update_freq)
     print("Number of training examples = %d" % len(dataset_train))
     print("Number of training training per epoch = %d" % num_training_steps_per_epoch)
-
+    
     # assigner는 레이어당 다른 learning rate를 할당하기 위해 사용되는 객체
     if args.layer_decay < 1.0 or args.layer_decay > 1.0:
         # args.layer_decay가 1.0이 아니면 num_layers를 12로 설정
@@ -351,18 +385,11 @@ def main(args):
     # assigner의 값 출력
     if assigner is not None:
         print("Assigned values = %s" % str(assigner.values))
-
-    # 분산학습을 위한 것
-    if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=False)
-        model_without_ddp = model.module
-
+        
     optimizer = create_optimizer(
         args, model_without_ddp, skip_list=None,
         get_num_layer=assigner.get_layer_id if assigner is not None else None, 
         get_layer_scale=assigner.get_scale if assigner is not None else None)
-
-    loss_scaler = NativeScaler() # if args.use_amp is False, this won't be used
 
     # cosine learning rate 스케줄 생성.
     print("Use Cosine LR scheduler")
@@ -377,7 +404,7 @@ def main(args):
     wd_schedule_values = utils.cosine_scheduler(
         args.weight_decay, args.weight_decay_end, args.epochs, num_training_steps_per_epoch)
     print("Max WD = %.7f, Min WD = %.7f" % (max(wd_schedule_values), min(wd_schedule_values)))
-
+    
     # mixup_fn이 존재한다면 SoftTargetCrossEntropy()
     # args.smoothing이 0보다 크면 LabelSmoothingCrossEntropy
     # args.smoothing이 0이하면(0이라면) CrossEntropyLoss
@@ -390,39 +417,27 @@ def main(args):
         criterion = torch.nn.CrossEntropyLoss()
 
     print("criterion = %s" % str(criterion))
-
-    # 모델 로드
-    # 체크포인트 이용
-    utils.auto_load_model(
-        args=args, model=model, model_without_ddp=model_without_ddp,
-        optimizer=optimizer, loss_scaler=loss_scaler, model_ema=model_ema)
-
+    
     # evaluation만 하는 경우
     if args.eval:
         print(f"Eval only mode")
         test_stats = evaluate(data_loader_val, model, device, use_amp=args.use_amp)
         print(f"Accuracy of the network on {len(dataset_val)} test images: {test_stats['acc1']:.5f}%")
         return
-
+    
     max_accuracy = 0.0
     if args.model_ema and args.model_ema_eval:
         max_accuracy_ema = 0.0
-
-    # 본격적인 학습시작
+    
+    # 본격적인 학습 시작
     print("Start training for %d epochs" % args.epochs)
     start_time = time.time()
     for epoch in range(args.start_epoch, args.epochs):
-        if args.distributed:
-            data_loader_train.sampler.set_epoch(epoch)
-        if log_writer is not None:
-            log_writer.set_step(epoch * num_training_steps_per_epoch * args.update_freq)
-        if wandb_logger:
-            wandb_logger.set_steps()
         # 1 epoch에 대해서 학습
-        train_stats = train_one_epoch(
+        train_stats = one_epoch_train(
             model, criterion, data_loader_train, optimizer,
-            device, epoch, loss_scaler, args.clip_grad, model_ema, mixup_fn,
-            log_writer=log_writer, wandb_logger=wandb_logger, start_steps=epoch * num_training_steps_per_epoch,
+            device, epoch, None, args.clip_grad, model_ema, mixup_fn,
+            log_writer=None, wandb_logger=None, start_steps=epoch * num_training_steps_per_epoch,
             lr_schedule_values=lr_schedule_values, wd_schedule_values=wd_schedule_values,
             num_training_steps_per_epoch=num_training_steps_per_epoch, update_freq=args.update_freq,
             use_amp=args.use_amp
@@ -431,7 +446,8 @@ def main(args):
             if (epoch + 1) % args.save_ckpt_freq == 0 or epoch + 1 == args.epochs:
                 utils.save_model(
                     args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                    loss_scaler=loss_scaler, epoch=epoch, model_ema=model_ema)
+                    loss_scaler=None, epoch=epoch, model_ema=model_ema)
+                
         if data_loader_val is not None:
             test_stats = evaluate(data_loader_val, model, device, use_amp=args.use_amp)
             print(f"Accuracy of the model on the {len(dataset_val)} test images: {test_stats['acc1']:.1f}%")
@@ -440,13 +456,8 @@ def main(args):
                 if args.output_dir and args.save_ckpt:
                     utils.save_model(
                         args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                        loss_scaler=loss_scaler, epoch="best", model_ema=model_ema)
+                        loss_scaler=None, epoch="best", model_ema=model_ema)
             print(f'Max accuracy: {max_accuracy:.2f}%')
-
-            if log_writer is not None:
-                log_writer.update(test_acc1=test_stats['acc1'], head="perf", step=epoch)
-                log_writer.update(test_acc5=test_stats['acc5'], head="perf", step=epoch)
-                log_writer.update(test_loss=test_stats['loss'], head="perf", step=epoch)
 
             log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                          **{f'test_{k}': v for k, v in test_stats.items()},
@@ -462,10 +473,8 @@ def main(args):
                     if args.output_dir and args.save_ckpt:
                         utils.save_model(
                             args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                            loss_scaler=loss_scaler, epoch="best-ema", model_ema=model_ema)
+                            loss_scaler=None, epoch="best-ema", model_ema=model_ema)
                     print(f'Max EMA accuracy: {max_accuracy_ema:.2f}%')
-                if log_writer is not None:
-                    log_writer.update(test_acc1_ema=test_stats_ema['acc1'], head="perf", step=epoch)
                 log_stats.update({**{f'test_{k}_ema': v for k, v in test_stats_ema.items()}})
         else:
             log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
@@ -473,25 +482,20 @@ def main(args):
                          'n_parameters': n_parameters}
 
         if args.output_dir and utils.is_main_process():
-            if log_writer is not None:
-                log_writer.flush()
             with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
-
-        if wandb_logger:
-            wandb_logger.log_epoch_metrics(log_stats)
-
-    if wandb_logger and args.wandb_ckpt and args.save_ckpt and args.output_dir:
-        wandb_logger.log_checkpoints()
-
-
+    
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser('ConvNeXt training and evaluation script', parents=[get_args_parser()])
     args = parser.parse_args()
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+        
+    args = parser.parse_args(["--model", "convnext_tiny", "--drop_path", "0.1", "--batch_size", "32", "--lr", "4e-3", "--update_freq", "4", "--model_ema", "true", "--model_ema_eval", "true", "--data_path", "./path/to/imagenet-1k", "--output_dir", "./path/to/save_results"])
+    
     main(args)
