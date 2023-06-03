@@ -142,10 +142,10 @@ ImageNet데이터셋을 다운로드 받고 아래와 같은 계층으로 데이
 ---3
 ----00000009.JPEG
 ```
-혹은
-val 데이터의 경우 val 폴더 내에 이미지들을 모아두고 imagenet_move_to_folder.py 파일을 실행한다.
 
-training을 수행하기 위해서 main2.py 파일을 실행한다.  
+validation 데이터의 경우 val 폴더 내에 이미지들을 모아두고 module1에 있는 imagenet_val_setup.sh 파일을 압축을 풀어 jpg파일이 존재하는 폴더에 넣은 후 imagenet_val_setup.sh를 실행한다. (정상작동하지 않을 시 윈도우에서 시도)
+
+training을 수행하기 위해서 main.py 파일을 실행한다.  
 해당 코드를 수행하게되면 224x224사이즈의 ConvNeXt-T로 IMAGENET 1k에 대해 학습한다.  
 만일 다른 모델을 실행하고자 한다면 main2.py의 499번째 줄의 convnext_tiny를  
 |모델 이름|parameter|

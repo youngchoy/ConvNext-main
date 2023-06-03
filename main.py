@@ -494,4 +494,12 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+        
+    model_name = "convnext_tiny"
+    batch_size = 184
+    data_path = "./path/to/imagenet-1k"
+    output_dir = "./path/to/save_results"
+        
+    args = parser.parse_args(["--model", model_name, "--drop_path", "0.1", "--batch_size", str(batch_size), "--lr", "4e-3", "--update_freq", "4", "--model_ema", "true", "--model_ema_eval", "true", "--data_path", data_path, "--output_dir", output_dir])
+    
     main(args)
