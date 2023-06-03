@@ -115,7 +115,7 @@ pip install torch==1.8.0+cu111 torchvision==0.9.0+cu111 -f https://download.pyto
 모델에 대한 디테일은 models파일의  
 convnext_isotropic.py와 convnext.py를 통해서 확인할 수 있다.
 convnext.py는 일반적인 ConvNeXt 모델을 뜻하고,  
-convnext_isotropic.py는 ViT스타일로 일반화시킨 모델로, downsampling을 없애고 feature resolution을 고정한 모델을 뜻한다.  
+convnext_isotropic.py는 ViT스타일로 일반화시킨 모델로, downsampling을 없애고 feature resolution을 고정한 모델을 뜻한다.
 다만 해당 repo에서는 convnext_isotropic의 코드만 있을 뿐 학습이나 추론에는 사용하지 않는다.
 
 ## training 수행방법
