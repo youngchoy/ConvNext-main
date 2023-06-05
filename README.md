@@ -107,7 +107,7 @@ torch와 torchvision은 아래의 명령어를 이용하여 다운로드 받을 
 ```
 pip install torch==1.8.0+cu111 torchvision==0.9.0+cu111 -f https://download.pytorch.org/whl/torch_stable.html
 ```
-- timm == 0.3.4
+- timm == 0.9.2
 - tensorboardX == 2.6
 
 # 실행방법
