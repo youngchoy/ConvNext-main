@@ -497,9 +497,9 @@ if __name__ == '__main__':
         
     model_name = "convnext_tiny"
     batch_size = 184
-    data_path = "./path/to/imagenet-1k"
+    data_path = "./path/to/imagenet-1k_50"
     output_dir = "./path/to/save_results"
-        
-    args = parser.parse_args(["--model", model_name, "--drop_path", "0.1", "--batch_size", str(batch_size), "--lr", "4e-3", "--update_freq", "4", "--model_ema", "true", "--model_ema_eval", "true", "--data_path", data_path, "--output_dir", output_dir])
+    
+    args = parser.parse_args(["--model", model_name, "--drop_path", "0.1", "--batch_size", str(batch_size), "--lr", "4e-3", "--update_freq", "4", "--model_ema", "true", "--model_ema_eval", "true", "--data_path", data_path, "--output_dir", output_dir, '--epochs', str(200)])
     
     main(args)

@@ -97,10 +97,8 @@ ConvNeXt-T의 pseudo code는 아래와 같다.
 
 # Requirements 설명
 
-파이썬 3.9.0 사용
-
-필요한 library
-
+## 학습시 필요한 library
+- 파이썬 3.9.0 사용
 - torch == 1.8.1
 - torchvision == 0.9.0
 torch와 torchvision은 아래의 명령어를 이용하여 다운로드 받을 수 있다.
@@ -109,6 +107,10 @@ pip install torch==1.8.0+cu111 torchvision==0.9.0+cu111 -f https://download.pyto
 ```
 - timm == 0.9.2
 - tensorboardX == 2.6
+
+## Inference시 필요한 library
+- 파이썬 3.9.0 사용
+- torch > 2.0
 
 # 실행방법
 
@@ -212,3 +214,54 @@ python classification.py --model convnext_tiny_in22
 ```
 
 matplotlib을 통하여 각 이미지에 대한 출력을 얻을 수 있다.
+
+---
+
+# Revision
+
+## Motivation
+Image Classificaiton 네트워크는 이미지를 보고 어떤 물체인지 판별하는 역할을 한다. 이를 위해서 우리는 JPEG로 저장된 이미지를 사용하여 학습을 진행한다. 이때, JPEG는 손실 압축 코덱으로 원본 이미지의 정보중 인간이 알아차릴 수 없는 정보를 삭제하여 용량을 줄인다. 보통은 hihg-frequency 대역의 이미지 정보들이 손실되는 경향이 강하다. 그러나 실제로 JPEG 이미지를 여러 qualiyt로 변환하였을 때, 인간은 약간의 차이는 확인할 수 있지만 큰 차이는 확인할 수 없다. 이에 착안하여 이미지의 원본에서 크게 차이나지 않는 낮은 quality의 이미지로도 학습을 시키면 더 높은 성능을 얻을 수 있을 것이라 판단하였다.
+
+실제로 원본과 quality를 50으로 줄인 이미지를 비교하였을 때, 큰 차이가 없는것을 확인할 수 있었고,
+두 이미지를 모델에 넣게되면 출력되는 결과값이 달라지는 것을 확인할 수 있었다. 추가로 grad-cam으로 확인하였을 때, image classification과는 크게 상관없는 위치의 데이터들의 activation이 높아지는 것 또한 확인할 수 있었다.
+
+또 다른 방법의 augmentation이라고 생각할 수 있겠다.
+
+사실 channel pruning을 하려고 했는데 channel별 activation을 구하고 activation 높은거 없애고 하는데 시간이 많이 걸려서 시간상 문제로 진행하지 못하였다.
+
+## Pseudo-Code
+모델에 대한 Pseudo-Code는 동일하며, 학습 방법에서 차이가 발생하였다.
+
+> 100 epoch까지 일반적인 imagenet-1k dataset으로 학습  
+> 150 epoch까지 50%의 quality로 낮춘 jpeg 파일 dataset으로 학습
+
+## train
+module1의 image_quality_down.py 실행  
+image_quality_down.py는 raw_im_path와 target_path가 존재한다.   
+기본적으로 raw_im_path는 './path/to/imagenet-1k/train'  
+target_path는 './path/to/imagenet-1k/train_50'이다.
+
+학습은 먼저 기존 데이터셋을 이용하여 100epoch까지 학습을 진행하기 위해 main.py에서 498~503번 line을 아래와 같이 변경하고 main.py를 실행한다.
+```python
+    model_name = "convnext_tiny"
+    batch_size = 184
+    data_path = "./path/to/imagenet-1k"
+    output_dir = "./path/to/save_results"
+        
+    args = parser.parse_args(["--model", model_name, "--drop_path", "0.1", "--batch_size", str(batch_size), "--lr", "4e-3", "--update_freq", "4", "--model_ema", "true", "--model_ema_eval", "true", "--data_path", data_path, "--output_dir", output_dir, '--epochs', str(100)])
+```
+
+이후 130epoch까지 학습을 진행하기 위해 module1폴더 내의 image_quality_dwon.py를 실행하고, path/to내에 생성된 imagenet-1k_50에 train폴더와 val폴더를 복사한 후, 아래와 같이 main.py의 503번 line을 변경한다.
+```python
+    model_name = "convnext_tiny"
+    batch_size = 184
+    data_path = "./path/to/imagenet-1k_50"
+    output_dir = "./path/to/save_results"
+        
+    args = parser.parse_args(["--model", model_name, "--drop_path", "0.1", "--batch_size", str(batch_size), "--lr", "4e-3", "--update_freq", "4", "--model_ema", "true", "--model_ema_eval", "true", "--data_path", data_path, "--output_dir", output_dir, '--epochs', str(150)])
+```
+이후 main.py를 실행하여 학습을 진행한다.
+
+## Results
+100epoch까지 기존 IMAGENET-1k 데이터셋으로 학습을 진행하였고,  
+130epoch까지 학습시 성능이 82.9% -> 83.1%로 0.2% 상승하는것을 확인할 수 있었다.
